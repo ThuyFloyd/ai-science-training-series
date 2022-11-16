@@ -64,7 +64,12 @@ ntests = len(list(test_dset))
 
 # shuffle the dataset, with shuffle buffer to be 10000
 dataset = dataset.repeat().shuffle(10000).batch(args.batch_size)
-test_dset  = test_dset.repeat().batch(args.batch_size)
+test_dset  = (
+  test_dset.shard(
+    num_shards=hvd.size(),
+    index=hvd.rank()
+  ).repeat().batch(args.batch_size)
+)
 
 #----------------------------------------------------
 # Model
@@ -81,7 +86,7 @@ mnist_model = tf.keras.Sequential([
 ])
 loss = tf.losses.SparseCategoricalCrossentropy()
 
-opt = tf.optimizers.Adam(args.lr)
+opt = tf.optimizers.Adam(args.lr*hvd.size())
 
 checkpoint_dir = './checkpoints/tf2_mnist'
 checkpoint = tf.train.Checkpoint(model=mnist_model, optimizer=opt)
@@ -97,7 +102,7 @@ def training_step(images, labels):
         pred = tf.math.argmax(probs, axis=1)
         equality = tf.math.equal(pred, labels)
         accuracy = tf.math.reduce_mean(tf.cast(equality, tf.float32))
-
+    tape = hvd.DistributedGradientTape(tape)
     grads = tape.gradient(loss_value, mnist_model.trainable_variables)
     opt.apply_gradients(zip(grads, mnist_model.trainable_variables))
     return loss_value, accuracy
